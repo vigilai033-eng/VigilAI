@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import confetti from "canvas-confetti";
 
 // ─── Types ────────────────────────────────────────────────
 type EmailProvider = "Gmail" | "Outlook" | "Custom" | "";
@@ -11,6 +12,7 @@ type TechOption = "React" | "Node.js" | "Python" | "Django" | "WordPress" | "Oth
 interface FormData {
   businessName: string;
   websiteUrl: string;
+  email: string;
   emailProvider: EmailProvider;
   techStack: TechOption[];
   teamSize: TeamSize;
@@ -40,6 +42,7 @@ const STEPS = [
 const INITIAL_FORM: FormData = {
   businessName: "",
   websiteUrl: "",
+  email: "",
   emailProvider: "",
   techStack: [],
   teamSize: "",
@@ -84,6 +87,11 @@ export default function OnboardingForm() {
     }
 
     if (step === 2) {
+      if (!form.email.trim()) {
+        errs.email = "Email is required.";
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
+        errs.email = "Please enter a valid email address.";
+      }
       if (!form.emailProvider)
         errs.emailProvider = "Please select an email provider.";
     }
@@ -150,6 +158,7 @@ export default function OnboardingForm() {
           website_url: form.websiteUrl.trim().startsWith("http")
             ? form.websiteUrl.trim()
             : `https://${form.websiteUrl.trim()}`,
+          email: form.email.trim(),
           email_provider: form.emailProvider,
           tech_stack: form.techStack,
           team_size: form.teamSize,
@@ -159,9 +168,14 @@ export default function OnboardingForm() {
 
       if (error) throw error;
       setSubmitted(true);
+      confetti({
+        particleCount: 150,
+        spread: 70,
+        origin: { y: 0.6 },
+        colors: ['#22c55e', '#16a34a', '#4ade80', '#ffffff']
+      });
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
-      setSubmitError(message);
+      setSubmitError("Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -173,52 +187,18 @@ export default function OnboardingForm() {
   // ─── Success screen ────────────────────────────────────
   if (submitted) {
     return (
-      <div className="success-screen" role="alert" aria-live="polite">
-        <div className="success-icon-ring">
-          <div className="success-icon-inner" aria-hidden="true">🛡️</div>
+      <div className="success-screen" role="alert" aria-live="polite" style={{ minHeight: "60vh", justifyContent: "center" }}>
+        <div className="success-icon-ring" style={{ marginBottom: "2rem" }}>
+          <div className="success-icon-inner" aria-hidden="true" style={{ fontSize: "3rem", color: "#fff" }}>✓</div>
         </div>
 
-        <h2 className="success-title">You&rsquo;re protected!</h2>
+        <h2 className="success-title">VigilAI is now watching your stack.</h2>
         <p className="success-message">
-          <strong>VigilAI is now watching your stack.</strong><br />
           Check your inbox in 10 minutes.
         </p>
-
-        <div className="success-stats" aria-label="Protection stats">
-          <div className="success-stat">
-            <span className="success-stat-value">24/7</span>
-            <span className="success-stat-label">Monitoring</span>
-          </div>
-          <div className="success-divider" aria-hidden="true" />
-          <div className="success-stat">
-            <span className="success-stat-value">&lt;10s</span>
-            <span className="success-stat-label">Alert time</span>
-          </div>
-          <div className="success-divider" aria-hidden="true" />
-          <div className="success-stat">
-            <span className="success-stat-value">99.9%</span>
-            <span className="success-stat-label">Uptime SLA</span>
-          </div>
-        </div>
-
-        <div className="success-checklist" role="list">
-          <div className="success-check-item" role="listitem">
-            <span className="check-bullet" aria-hidden="true">✓</span>
-            Stack analysis underway
-          </div>
-          <div className="success-check-item" role="listitem">
-            <span className="check-bullet" aria-hidden="true">✓</span>
-            Threat model generated
-          </div>
-          <div className="success-check-item" role="listitem">
-            <span className="check-bullet" aria-hidden="true">✓</span>
-            Onboarding email queued
-          </div>
-        </div>
       </div>
     );
   }
-
   // ─── Form panels ───────────────────────────────────────
   const panelClass = `step-panel${direction === "back" ? " step-panel-back" : ""}`;
 
@@ -312,6 +292,30 @@ export default function OnboardingForm() {
       {step === 2 && (
         <div className={panelClass} key="step-2">
           <div className="field-group">
+            <label className="field-label" htmlFor="email">
+              <span className="field-icon" aria-hidden="true">✉️</span>
+              Work Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              className="field-input"
+              placeholder="you@company.com"
+              value={form.email}
+              onChange={handleText("email")}
+              onKeyDown={(e) => e.key === "Enter" && goNext()}
+              autoFocus
+              autoComplete="email"
+              aria-describedby={errors.email ? "email-error" : undefined}
+              aria-invalid={!!errors.email}
+            />
+            {errors.email && (
+              <span id="email-error" className="field-error" role="alert">
+                ⚠ {errors.email}
+              </span>
+            )}
+          </div>
+          <div className="field-group">
             <label className="field-label" htmlFor="email-provider">
               <span className="field-icon" aria-hidden="true">📧</span>
               Email Provider
@@ -322,7 +326,6 @@ export default function OnboardingForm() {
                 className="field-select"
                 value={form.emailProvider}
                 onChange={handleSelect("emailProvider")}
-                autoFocus
                 aria-describedby={errors.emailProvider ? "email-provider-error" : undefined}
                 aria-invalid={!!errors.emailProvider}
               >
@@ -419,8 +422,8 @@ export default function OnboardingForm() {
 
           {/* Global submit error */}
           {submitError && (
-            <div className="field-error" role="alert" style={{ marginBottom: "1rem" }}>
-              ⚠ {submitError}
+            <div className="field-error" role="alert" style={{ marginBottom: "1rem", color: "#ef4444", fontWeight: 500, fontSize: "0.9rem" }}>
+              {submitError}
             </div>
           )}
         </div>

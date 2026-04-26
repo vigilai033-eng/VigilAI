@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS public.subscribers (
   email_provider  text        NOT NULL CHECK (email_provider IN ('Gmail', 'Outlook', 'Custom')),
   tech_stack      text[]      NOT NULL DEFAULT '{}',
   team_size       text        NOT NULL CHECK (team_size IN ('1-5', '6-20', '21-50', '50+')),
+  email           text        NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
 
