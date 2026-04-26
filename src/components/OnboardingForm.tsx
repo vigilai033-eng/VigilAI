@@ -1,0 +1,482 @@
+"use client";
+
+import { useState, useCallback } from "react";
+import { supabase } from "@/lib/supabase";
+
+// ─── Types ────────────────────────────────────────────────
+type EmailProvider = "Gmail" | "Outlook" | "Custom" | "";
+type TeamSize = "1-5" | "6-20" | "21-50" | "50+" | "";
+type TechOption = "React" | "Node.js" | "Python" | "Django" | "WordPress" | "Other";
+
+interface FormData {
+  businessName: string;
+  websiteUrl: string;
+  emailProvider: EmailProvider;
+  techStack: TechOption[];
+  teamSize: TeamSize;
+}
+
+// ─── Constants ────────────────────────────────────────────
+const EMAIL_PROVIDERS: EmailProvider[] = ["Gmail", "Outlook", "Custom"];
+const TEAM_SIZES: TeamSize[] = ["1-5", "6-20", "21-50", "50+"];
+
+const TECH_OPTIONS: { value: TechOption; icon: string }[] = [
+  { value: "React",     icon: "⚛️" },
+  { value: "Node.js",   icon: "🟩" },
+  { value: "Python",    icon: "🐍" },
+  { value: "Django",    icon: "🎸" },
+  { value: "WordPress", icon: "🌐" },
+  { value: "Other",     icon: "🔧" },
+];
+
+const STEPS = [
+  { label: "Step 1 of 5", title: "Your Business" },
+  { label: "Step 2 of 5", title: "Your Website" },
+  { label: "Step 3 of 5", title: "Email Provider" },
+  { label: "Step 4 of 5", title: "Tech Stack" },
+  { label: "Step 5 of 5", title: "Team Size" },
+];
+
+const INITIAL_FORM: FormData = {
+  businessName: "",
+  websiteUrl: "",
+  emailProvider: "",
+  techStack: [],
+  teamSize: "",
+};
+
+// ─── Helpers ──────────────────────────────────────────────
+function isValidUrl(val: string): boolean {
+  try {
+    new URL(val.startsWith("http") ? val : `https://${val}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ─── Component ────────────────────────────────────────────
+export default function OnboardingForm() {
+  const [step, setStep] = useState(0);
+  const [direction, setDirection] = useState<"forward" | "back">("forward");
+  const [form, setForm] = useState<FormData>(INITIAL_FORM);
+  const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  // ── Validation ─────────────────────────────────────────
+  const validate = useCallback((): boolean => {
+    const errs: Partial<Record<keyof FormData, string>> = {};
+
+    if (step === 0) {
+      if (!form.businessName.trim())
+        errs.businessName = "Business name is required.";
+      else if (form.businessName.trim().length < 2)
+        errs.businessName = "Must be at least 2 characters.";
+    }
+
+    if (step === 1) {
+      if (!form.websiteUrl.trim())
+        errs.websiteUrl = "Website URL is required.";
+      else if (!isValidUrl(form.websiteUrl))
+        errs.websiteUrl = "Please enter a valid URL (e.g. https://yoursite.com).";
+    }
+
+    if (step === 2) {
+      if (!form.emailProvider)
+        errs.emailProvider = "Please select an email provider.";
+    }
+
+    if (step === 3) {
+      if (form.techStack.length === 0)
+        errs.techStack = "Select at least one technology.";
+    }
+
+    if (step === 4) {
+      if (!form.teamSize)
+        errs.teamSize = "Please select your team size.";
+    }
+
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }, [step, form]);
+
+  // ── Navigation ─────────────────────────────────────────
+  const goNext = () => {
+    if (!validate()) return;
+    setDirection("forward");
+    setStep((s) => Math.min(s + 1, STEPS.length - 1));
+    setErrors({});
+  };
+
+  const goBack = () => {
+    setDirection("back");
+    setStep((s) => Math.max(s - 1, 0));
+    setErrors({});
+  };
+
+  // ── Field handlers ─────────────────────────────────────
+  const handleText = (field: keyof FormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setForm((f) => ({ ...f, [field]: e.target.value }));
+    if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }));
+  };
+
+  const handleSelect = (field: keyof FormData) => (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setForm((f) => ({ ...f, [field]: e.target.value }));
+    if (errors[field]) setErrors((err) => ({ ...err, [field]: undefined }));
+  };
+
+  const toggleTech = (tech: TechOption) => {
+    setForm((f) => ({
+      ...f,
+      techStack: f.techStack.includes(tech)
+        ? f.techStack.filter((t) => t !== tech)
+        : [...f.techStack, tech],
+    }));
+    if (errors.techStack) setErrors((e) => ({ ...e, techStack: undefined }));
+  };
+
+  // ── Submit ─────────────────────────────────────────────
+  const handleSubmit = async () => {
+    if (!validate()) return;
+    setSubmitting(true);
+    setSubmitError("");
+
+    try {
+      const { error } = await supabase.from("subscribers").insert([
+        {
+          business_name: form.businessName.trim(),
+          website_url: form.websiteUrl.trim().startsWith("http")
+            ? form.websiteUrl.trim()
+            : `https://${form.websiteUrl.trim()}`,
+          email_provider: form.emailProvider,
+          tech_stack: form.techStack,
+          team_size: form.teamSize,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+
+      if (error) throw error;
+      setSubmitted(true);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      setSubmitError(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // ─── Progress ──────────────────────────────────────────
+  const progress = ((step + 1) / STEPS.length) * 100;
+
+  // ─── Success screen ────────────────────────────────────
+  if (submitted) {
+    return (
+      <div className="success-screen" role="alert" aria-live="polite">
+        <div className="success-icon-ring">
+          <div className="success-icon-inner" aria-hidden="true">🛡️</div>
+        </div>
+
+        <h2 className="success-title">You&rsquo;re protected!</h2>
+        <p className="success-message">
+          <strong>VigilAI is now watching your stack.</strong><br />
+          Check your inbox in 10 minutes.
+        </p>
+
+        <div className="success-stats" aria-label="Protection stats">
+          <div className="success-stat">
+            <span className="success-stat-value">24/7</span>
+            <span className="success-stat-label">Monitoring</span>
+          </div>
+          <div className="success-divider" aria-hidden="true" />
+          <div className="success-stat">
+            <span className="success-stat-value">&lt;10s</span>
+            <span className="success-stat-label">Alert time</span>
+          </div>
+          <div className="success-divider" aria-hidden="true" />
+          <div className="success-stat">
+            <span className="success-stat-value">99.9%</span>
+            <span className="success-stat-label">Uptime SLA</span>
+          </div>
+        </div>
+
+        <div className="success-checklist" role="list">
+          <div className="success-check-item" role="listitem">
+            <span className="check-bullet" aria-hidden="true">✓</span>
+            Stack analysis underway
+          </div>
+          <div className="success-check-item" role="listitem">
+            <span className="check-bullet" aria-hidden="true">✓</span>
+            Threat model generated
+          </div>
+          <div className="success-check-item" role="listitem">
+            <span className="check-bullet" aria-hidden="true">✓</span>
+            Onboarding email queued
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Form panels ───────────────────────────────────────
+  const panelClass = `step-panel${direction === "back" ? " step-panel-back" : ""}`;
+
+  return (
+    <div role="form" aria-label="VigilAI onboarding">
+      {/* Header */}
+      <div className="step-header">
+        <div className="step-info">
+          <span className="step-label">{STEPS[step].label}</span>
+          <span className="step-title">{STEPS[step].title}</span>
+        </div>
+        <div className="step-dots" role="tablist" aria-label="Form progress">
+          {STEPS.map((s, i) => (
+            <div
+              key={s.label}
+              role="tab"
+              aria-selected={i === step}
+              aria-label={`${s.label}: ${s.title}`}
+              className={`step-dot ${i === step ? "active" : i < step ? "done" : ""}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="progress-bar-track" role="progressbar" aria-valuenow={step + 1} aria-valuemin={1} aria-valuemax={5}>
+        <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+      </div>
+
+      {/* ── Step 1: Business name ──────────────────────── */}
+      {step === 0 && (
+        <div className={panelClass} key="step-0">
+          <div className="field-group">
+            <label className="field-label" htmlFor="business-name">
+              <span className="field-icon" aria-hidden="true">🏢</span>
+              Business Name
+            </label>
+            <input
+              id="business-name"
+              type="text"
+              className="field-input"
+              placeholder="Acme AI Inc."
+              value={form.businessName}
+              onChange={handleText("businessName")}
+              onKeyDown={(e) => e.key === "Enter" && goNext()}
+              autoFocus
+              autoComplete="organization"
+              aria-describedby={errors.businessName ? "business-name-error" : undefined}
+              aria-invalid={!!errors.businessName}
+            />
+            {errors.businessName && (
+              <span id="business-name-error" className="field-error" role="alert">
+                ⚠ {errors.businessName}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 2: Website URL ────────────────────────── */}
+      {step === 1 && (
+        <div className={panelClass} key="step-1">
+          <div className="field-group">
+            <label className="field-label" htmlFor="website-url">
+              <span className="field-icon" aria-hidden="true">🌐</span>
+              Website URL
+            </label>
+            <input
+              id="website-url"
+              type="url"
+              className="field-input"
+              placeholder="https://yourcompany.com"
+              value={form.websiteUrl}
+              onChange={handleText("websiteUrl")}
+              onKeyDown={(e) => e.key === "Enter" && goNext()}
+              autoFocus
+              autoComplete="url"
+              aria-describedby={errors.websiteUrl ? "website-url-error" : undefined}
+              aria-invalid={!!errors.websiteUrl}
+            />
+            {errors.websiteUrl && (
+              <span id="website-url-error" className="field-error" role="alert">
+                ⚠ {errors.websiteUrl}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 3: Email provider ─────────────────────── */}
+      {step === 2 && (
+        <div className={panelClass} key="step-2">
+          <div className="field-group">
+            <label className="field-label" htmlFor="email-provider">
+              <span className="field-icon" aria-hidden="true">📧</span>
+              Email Provider
+            </label>
+            <div className="select-wrapper">
+              <select
+                id="email-provider"
+                className="field-select"
+                value={form.emailProvider}
+                onChange={handleSelect("emailProvider")}
+                autoFocus
+                aria-describedby={errors.emailProvider ? "email-provider-error" : undefined}
+                aria-invalid={!!errors.emailProvider}
+              >
+                <option value="" disabled>Select your email provider…</option>
+                {EMAIL_PROVIDERS.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+            {errors.emailProvider && (
+              <span id="email-provider-error" className="field-error" role="alert">
+                ⚠ {errors.emailProvider}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 4: Tech stack ─────────────────────────── */}
+      {step === 3 && (
+        <div className={panelClass} key="step-3">
+          <div className="field-group">
+            <label className="field-label">
+              <span className="field-icon" aria-hidden="true">⚙️</span>
+              Tech Stack
+              <span style={{ color: "var(--text-dim)", fontWeight: 400, marginLeft: "0.25rem" }}>
+                (select all that apply)
+              </span>
+            </label>
+            <div
+              className="tech-grid"
+              role="group"
+              aria-label="Technology stack options"
+              aria-describedby={errors.techStack ? "tech-stack-error" : undefined}
+            >
+              {TECH_OPTIONS.map(({ value, icon }) => (
+                <div className="tech-option" key={value}>
+                  <input
+                    type="checkbox"
+                    id={`tech-${value}`}
+                    checked={form.techStack.includes(value)}
+                    onChange={() => toggleTech(value)}
+                    aria-label={value}
+                  />
+                  <label className="tech-label" htmlFor={`tech-${value}`}>
+                    <span className="tech-check" aria-hidden="true">
+                      {form.techStack.includes(value) ? "✓" : ""}
+                    </span>
+                    <span className="tech-icon" aria-hidden="true">{icon}</span>
+                    {value}
+                  </label>
+                </div>
+              ))}
+            </div>
+            {errors.techStack && (
+              <span id="tech-stack-error" className="field-error" role="alert">
+                ⚠ {errors.techStack}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Step 5: Team size ──────────────────────────── */}
+      {step === 4 && (
+        <div className={panelClass} key="step-4">
+          <div className="field-group">
+            <label className="field-label" htmlFor="team-size">
+              <span className="field-icon" aria-hidden="true">👥</span>
+              Team Size
+            </label>
+            <div className="select-wrapper">
+              <select
+                id="team-size"
+                className="field-select"
+                value={form.teamSize}
+                onChange={handleSelect("teamSize")}
+                autoFocus
+                aria-describedby={errors.teamSize ? "team-size-error" : undefined}
+                aria-invalid={!!errors.teamSize}
+              >
+                <option value="" disabled>Select your team size…</option>
+                {TEAM_SIZES.map((s) => (
+                  <option key={s} value={s}>{s} people</option>
+                ))}
+              </select>
+            </div>
+            {errors.teamSize && (
+              <span id="team-size-error" className="field-error" role="alert">
+                ⚠ {errors.teamSize}
+              </span>
+            )}
+          </div>
+
+          {/* Global submit error */}
+          {submitError && (
+            <div className="field-error" role="alert" style={{ marginBottom: "1rem" }}>
+              ⚠ {submitError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Navigation */}
+      <div className="btn-row">
+        {step > 0 ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={goBack}
+            disabled={submitting}
+            aria-label="Go to previous step"
+          >
+            <span className="btn-icon">←</span>
+            Back
+          </button>
+        ) : (
+          <div />
+        )}
+
+        {step < STEPS.length - 1 ? (
+          <button
+            type="button"
+            id={`next-step-${step}`}
+            className="btn btn-primary"
+            onClick={goNext}
+            aria-label={`Continue to ${STEPS[step + 1].title}`}
+          >
+            Continue
+            <span className="btn-icon">→</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            id="submit-form"
+            className="btn btn-primary"
+            onClick={handleSubmit}
+            disabled={submitting}
+            aria-label="Submit onboarding form"
+          >
+            {submitting ? (
+              <>
+                <span className="spinner" aria-hidden="true" />
+                Activating…
+              </>
+            ) : (
+              <>
+                Activate VigilAI
+                <span className="btn-icon">🛡️</span>
+              </>
+            )}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
