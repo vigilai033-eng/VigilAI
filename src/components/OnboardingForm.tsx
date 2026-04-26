@@ -174,8 +174,9 @@ export default function OnboardingForm() {
         origin: { y: 0.6 },
         colors: ['#22c55e', '#16a34a', '#4ade80', '#ffffff']
       });
-    } catch (err: unknown) {
-      setSubmitError("Something went wrong. Please try again.");
+    } catch (err: any) {
+      console.error("Supabase insert error:", err);
+      setSubmitError(err.message || "Something went wrong. Please try again.");
     } finally {
       setSubmitting(false);
     }
