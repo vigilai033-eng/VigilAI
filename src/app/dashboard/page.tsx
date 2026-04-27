@@ -8,31 +8,77 @@ export default function DashboardPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [companyName, setCompanyName] = useState("");
+  
+  // Data states
+  const [score, setScore] = useState(100);
+  const [threats, setThreats] = useState<any[]>([]);
+  const [breaches, setBreaches] = useState(0);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { session }, error: authError } = await supabase.auth.getSession();
-      
-      if (!session || authError) {
-        router.push("/login");
-        return;
-      }
+    const fetchDashboardData = async () => {
+      try {
+        const { data: { session }, error: authError } = await supabase.auth.getSession();
+        
+        if (!session || authError) {
+          router.push("/login");
+          return;
+        }
 
-      // Fetch company name from subscribers table
-      const { data: subscriber, error: dbError } = await supabase
-        .from("subscribers")
-        .select("business_name")
-        .eq("id", session.user.id)
-        .single();
+        // Fetch company name, email, tech stack from subscribers table
+        const { data: subscriber, error: dbError } = await supabase
+          .from("subscribers")
+          .select("business_name, email, tech_stack")
+          .eq("id", session.user.id)
+          .single();
 
-      if (!dbError && subscriber) {
+        if (dbError || !subscriber) {
+          setLoading(false);
+          return;
+        }
+
         setCompanyName(subscriber.business_name);
-      }
 
-      setLoading(false);
+        // Call APIs
+        const [threatsRes, breachesRes] = await Promise.all([
+          fetch("/api/threats", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ techStack: subscriber.tech_stack })
+          }),
+          fetch("/api/breaches", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: subscriber.email })
+          })
+        ]);
+
+        const threatsData = await threatsRes.json();
+        const breachesData = await breachesRes.json();
+
+        setThreats(threatsData.threats || []);
+        setBreaches(breachesData.count || 0);
+
+        // Calculate score
+        let newScore = 100;
+        (threatsData.threats || []).forEach((t: any) => {
+          if (t.severity === "CRITICAL") newScore -= 15;
+          else if (t.severity === "HIGH") newScore -= 10;
+        });
+        
+        if (breachesData.count > 0) {
+          newScore -= 20;
+        }
+
+        // Floor at 0
+        setScore(Math.max(0, newScore));
+      } catch (err) {
+        console.error("Dashboard fetch error:", err);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    checkAuth();
+    fetchDashboardData();
   }, [router]);
 
   const handleLogout = async () => {
@@ -43,10 +89,20 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="page-wrapper" style={{ justifyContent: "center" }}>
-        <div className="spinner" />
+        <div className="spinner" style={{ width: "40px", height: "40px" }} />
       </div>
     );
   }
+
+  // Helper for severity color
+  const getSeverityStyle = (severity: string) => {
+    if (severity === "CRITICAL") return { color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)", icon: "🚨" };
+    if (severity === "HIGH") return { color: "#f97316", bg: "rgba(249, 115, 22, 0.1)", icon: "⚠️" };
+    return { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.1)", icon: "🛡️" };
+  };
+
+  // Score color
+  const scoreColor = score >= 80 ? "var(--green-500)" : score >= 50 ? "#f59e0b" : "#ef4444";
 
   return (
     <div className="page-wrapper">
@@ -75,44 +131,59 @@ export default function DashboardPage() {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "2rem", width: "100%" }}>
           {/* Security Score */}
-          <section className="card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 2rem" }}>
+          <section className="card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 2rem", height: "fit-content" }}>
             <h2 style={{ fontSize: "1rem", textTransform: "uppercase", letterSpacing: "1px", color: "var(--text-secondary)", marginBottom: "1.5rem" }}>Security Score</h2>
-            <div style={{ position: "relative", width: "150px", height: "150px", borderRadius: "50%", background: "conic-gradient(var(--green-500) 72%, var(--bg-secondary) 0)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 30px var(--green-glow)" }}>
+            <div style={{ position: "relative", width: "150px", height: "150px", borderRadius: "50%", background: `conic-gradient(${scoreColor} ${score}%, var(--bg-secondary) 0)`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: score >= 80 ? "0 0 30px var(--green-glow)" : "none" }}>
               <div style={{ width: "130px", height: "130px", borderRadius: "50%", background: "var(--bg-card)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
-                <span style={{ fontSize: "2.8rem", fontWeight: 900, color: "var(--text-primary)", lineHeight: 1 }}>72</span>
+                <span style={{ fontSize: "2.8rem", fontWeight: 900, color: "var(--text-primary)", lineHeight: 1 }}>{score}</span>
                 <span style={{ fontSize: "0.9rem", color: "var(--text-dim)", fontWeight: 600 }}>/ 100</span>
               </div>
             </div>
-            <p style={{ marginTop: "1.5rem", fontSize: "0.9rem", color: "var(--text-muted)", textAlign: "center" }}>Needs Improvement</p>
+            <p style={{ marginTop: "1.5rem", fontSize: "0.9rem", color: "var(--text-muted)", textAlign: "center" }}>
+              {score >= 80 ? "Excellent" : score >= 50 ? "Needs Improvement" : "Critical Risk"}
+            </p>
           </section>
 
           {/* Threat Cards */}
           <section style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             <h2 style={{ fontSize: "1.2rem", fontWeight: 700, marginBottom: "0.5rem", color: "var(--text-primary)" }}>Active Alerts</h2>
             
-            <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #ef4444" }}>
-              <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(239, 68, 68, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🚨</div>
-              <div>
-                <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Critical CVE detected in React</h3>
-                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Action required: Update react-scripts immediately.</p>
+            {threats.length === 0 && breaches === 0 && (
+              <div className="card" style={{ padding: "2rem", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1rem" }}>
+                <div style={{ fontSize: "2rem" }}>✅</div>
+                <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--green-400)" }}>No threats found</h3>
+                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Your stack looks secure. We will keep monitoring.</p>
               </div>
-            </div>
+            )}
 
-            <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #f59e0b" }}>
-              <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(245, 158, 11, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🔓</div>
-              <div>
-                <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Employee email found in data breach</h3>
-                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>1 account exposed. Forced password reset recommended.</p>
+            {breaches > 0 && (
+              <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #f97316" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(249, 115, 22, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🔓</div>
+                <div>
+                  <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Domain found in data breaches</h3>
+                  <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>{breaches} breach records found for your company's domain. Verify credentials.</p>
+                </div>
               </div>
-            </div>
+            )}
 
-            <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid var(--green-500)" }}>
-              <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "var(--green-glow)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🎣</div>
-              <div>
-                <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Phishing simulation due this week</h3>
-                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Schedule your team's quarterly security training.</p>
-              </div>
-            </div>
+            {threats.map((threat) => {
+              const style = getSeverityStyle(threat.severity);
+              return (
+                <div key={threat.id} className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: `4px solid ${style.color}` }}>
+                  <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: style.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem", flexShrink: 0 }}>
+                    {style.icon}
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.25rem" }}>
+                      <span style={{ fontSize: "0.7rem", fontWeight: 700, padding: "2px 8px", borderRadius: "100px", background: style.bg, color: style.color }}>{threat.severity}</span>
+                      <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>{threat.published}</span>
+                    </div>
+                    <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>{threat.title}</h3>
+                    <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", lineHeight: 1.5 }}>{threat.description}</p>
+                  </div>
+                </div>
+              );
+            })}
           </section>
         </div>
       </main>
