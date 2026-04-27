@@ -1,12 +1,41 @@
 import { NextResponse } from "next/server";
 
+// Helper to format date exactly as NVD API requires: YYYY-MM-DDTHH:mm:ss.000
+const formatDateForNVD = (date: Date) => {
+  return date.toISOString().substring(0, 19) + ".000";
+};
+
+// Helper for keyword expansion and filtering exclusions
+const getSearchConfig = (keyword: string) => {
+  let query = keyword;
+  let exclusions: string[] = [];
+  const lowerK = keyword.toLowerCase();
+
+  if (lowerK === "react") {
+    query = "React framework javascript";
+    exclusions.push("reactos");
+  }
+  
+  return { query, exclusions };
+};
+
 // GET method for testing in the browser
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const keyword = searchParams.get("keyword") || "React";
 
-    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(keyword)}&resultsPerPage=5`;
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 90); // last 90 days
+    
+    const pubStartDate = formatDateForNVD(startDate);
+    const pubEndDate = formatDateForNVD(endDate);
+
+    const { query, exclusions } = getSearchConfig(keyword);
+
+    const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${encodeURIComponent(pubStartDate)}&pubEndDate=${encodeURIComponent(pubEndDate)}&resultsPerPage=50`;
+    
     const res = await fetch(url, {
       headers: { "User-Agent": "VigilAI-Security-App" },
       next: { revalidate: 3600 }
@@ -17,7 +46,15 @@ export async function GET(req: Request) {
     }
 
     const data = await res.json();
-    const vulnerabilities = data.vulnerabilities || [];
+    let vulnerabilities = data.vulnerabilities || [];
+
+    // Filter results strictly
+    vulnerabilities = vulnerabilities.filter((item: any) => {
+      const desc = item.cve.descriptions?.find((d: any) => d.lang === "en")?.value?.toLowerCase() || "";
+      if (!desc.includes(keyword.toLowerCase())) return false; // Must contain exact original keyword
+      if (exclusions.some(ex => desc.includes(ex))) return false; // Must not contain exclusions
+      return true;
+    });
 
     const threats = vulnerabilities.map((item: any) => {
       const cve = item.cve;
@@ -57,12 +94,21 @@ export async function POST(req: Request) {
       return NextResponse.json({ threats: [] });
     }
 
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 90);
+    
+    const pubStartDate = formatDateForNVD(startDate);
+    const pubEndDate = formatDateForNVD(endDate);
+
     const techsToSearch = techStack.slice(0, 2);
-    let allCves: any[] = [];
+    let allThreats: any[] = [];
 
     for (const tech of techsToSearch) {
       try {
-        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(tech)}&resultsPerPage=5`;
+        const { query, exclusions } = getSearchConfig(tech);
+        const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${encodeURIComponent(pubStartDate)}&pubEndDate=${encodeURIComponent(pubEndDate)}&resultsPerPage=50`;
+        
         const res = await fetch(url, {
           headers: { "User-Agent": "VigilAI-Security-App" },
           next: { revalidate: 3600 } 
@@ -70,36 +116,44 @@ export async function POST(req: Request) {
         
         if (res.ok) {
           const data = await res.json();
-          if (data.vulnerabilities) {
-            allCves = [...allCves, ...data.vulnerabilities];
-          }
+          let vulnerabilities = data.vulnerabilities || [];
+          
+          vulnerabilities = vulnerabilities.filter((item: any) => {
+            const desc = item.cve.descriptions?.find((d: any) => d.lang === "en")?.value?.toLowerCase() || "";
+            if (!desc.includes(tech.toLowerCase())) return false;
+            if (exclusions.some(ex => desc.includes(ex))) return false;
+            return true;
+          });
+
+          const formatted = vulnerabilities.map((item: any) => {
+            const cve = item.cve;
+            const metrics = cve.metrics?.cvssMetricV31?.[0] || 
+                            cve.metrics?.cvssMetricV30?.[0] || 
+                            cve.metrics?.cvssMetricV2?.[0];
+                            
+            const severity = metrics?.cvssData?.baseSeverity || metrics?.baseSeverity || "MEDIUM";
+            const desc = cve.descriptions?.find((d: any) => d.lang === "en")?.value || "No description available.";
+            
+            return {
+              id: cve.id,
+              title: `${cve.id} (${tech} vulnerability)`,
+              description: desc.length > 120 ? desc.substring(0, 120) + "..." : desc,
+              severity: severity.toUpperCase(),
+              publishedDate: new Date(cve.published).toLocaleDateString(),
+              published: new Date(cve.published).toLocaleDateString(),
+              score: metrics?.cvssData?.baseScore || 5.0
+            };
+          });
+
+          allThreats = [...allThreats, ...formatted];
         }
       } catch (err) {
         console.error(`Failed to fetch CVEs for ${tech}:`, err);
       }
     }
 
-    const threats = allCves.map((item: any) => {
-      const cve = item.cve;
-      const metrics = cve.metrics?.cvssMetricV31?.[0] || 
-                      cve.metrics?.cvssMetricV30?.[0] || 
-                      cve.metrics?.cvssMetricV2?.[0];
-                      
-      const severity = metrics?.cvssData?.baseSeverity || metrics?.baseSeverity || "MEDIUM";
-      const desc = cve.descriptions?.find((d: any) => d.lang === "en")?.value || "No description available.";
-      
-      return {
-        id: cve.id,
-        title: `${cve.id} (${techStack.find((t: string) => desc.toLowerCase().includes(t.toLowerCase())) || "Component"} vulnerability)`,
-        description: desc.length > 120 ? desc.substring(0, 120) + "..." : desc,
-        severity: severity.toUpperCase(),
-        published: new Date(cve.published).toLocaleDateString(),
-        score: metrics?.cvssData?.baseScore || 5.0
-      };
-    });
-
-    threats.sort((a, b) => b.score - a.score);
-    const uniqueThreats = Array.from(new Map(threats.map((item) => [item.id, item])).values()).slice(0, 3);
+    allThreats.sort((a, b) => b.score - a.score);
+    const uniqueThreats = Array.from(new Map(allThreats.map((item) => [item.id, item])).values()).slice(0, 3);
 
     return NextResponse.json({ threats: uniqueThreats });
 
