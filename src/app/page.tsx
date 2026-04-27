@@ -15,7 +15,12 @@ export default function Home() {
             Vigil<span>AI</span>
           </span>
         </a>
-        <div className="navbar-badge">Early Access</div>
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
+          <div className="navbar-badge">Early Access</div>
+          <a href="/login" className="btn btn-ghost" style={{ padding: "0.4rem 1rem", fontSize: "0.85rem", border: "1px solid var(--border)" }}>
+            Login
+          </a>
+        </div>
       </nav>
 
       <main className="main" id="main-content">
