@@ -38,29 +38,39 @@ export default function DashboardPage() {
 
         setCompanyName(subscriber.business_name);
 
-        // Call APIs
-        const [threatsRes, breachesRes] = await Promise.all([
-          fetch("/api/threats", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ techStack: subscriber.tech_stack })
-          }),
-          fetch("/api/breaches", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: subscriber.email })
-          })
-        ]);
+        // 1. Fetch breaches
+        const breachesPromise = fetch("/api/breaches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: subscriber.email })
+        }).then(res => res.json());
 
-        const threatsData = await threatsRes.json();
-        const breachesData = await breachesRes.json();
+        // 2. Fetch threats via GET for each technology
+        const techPromises = (subscriber.tech_stack || []).map((tech: string) => 
+          fetch(`/api/threats?keyword=${encodeURIComponent(tech)}`).then(res => res.json())
+        );
 
-        setThreats(threatsData.threats || []);
+        // Await all parallel requests
+        const [breachesData, ...techResults] = await Promise.all([breachesPromise, ...techPromises]);
+
         setBreaches(breachesData.count || 0);
+
+        // Combine all threats
+        let allThreats: any[] = [];
+        techResults.forEach((res) => {
+          if (res.threats) {
+            allThreats = [...allThreats, ...res.threats];
+          }
+        });
+
+        // Deduplicate and sort
+        const uniqueThreats = Array.from(new Map(allThreats.map((t) => [t.id, t])).values());
+        uniqueThreats.sort((a, b) => b.score - a.score);
+        setThreats(uniqueThreats);
 
         // Calculate score
         let newScore = 100;
-        (threatsData.threats || []).forEach((t: any) => {
+        uniqueThreats.forEach((t: any) => {
           if (t.severity === "CRITICAL") newScore -= 15;
           else if (t.severity === "HIGH") newScore -= 10;
         });
@@ -94,15 +104,16 @@ export default function DashboardPage() {
     );
   }
 
-  // Helper for severity color
+  // Helper for severity color mapping
   const getSeverityStyle = (severity: string) => {
-    if (severity === "CRITICAL") return { color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)", icon: "🚨" };
-    if (severity === "HIGH") return { color: "#f97316", bg: "rgba(249, 115, 22, 0.1)", icon: "⚠️" };
-    return { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.1)", icon: "🛡️" };
+    const s = severity?.toUpperCase();
+    if (s === "CRITICAL" || s === "HIGH") return { color: "#ef4444", bg: "rgba(239, 68, 68, 0.1)", icon: "🚨" };
+    if (s === "MEDIUM") return { color: "#f97316", bg: "rgba(249, 115, 22, 0.1)", icon: "⚠️" };
+    return { color: "#eab308", bg: "rgba(234, 179, 8, 0.1)", icon: "🛡️" }; // LOW
   };
 
   // Score color
-  const scoreColor = score >= 80 ? "var(--green-500)" : score >= 50 ? "#f59e0b" : "#ef4444";
+  const scoreColor = score >= 80 ? "var(--green-500)" : score >= 50 ? "#f97316" : "#ef4444";
 
   return (
     <div className="page-wrapper">
@@ -139,8 +150,11 @@ export default function DashboardPage() {
                 <span style={{ fontSize: "0.9rem", color: "var(--text-dim)", fontWeight: 600 }}>/ 100</span>
               </div>
             </div>
-            <p style={{ marginTop: "1.5rem", fontSize: "0.9rem", color: "var(--text-muted)", textAlign: "center" }}>
+            <p style={{ marginTop: "1.5rem", fontSize: "0.9rem", color: "var(--text-muted)", textAlign: "center", fontWeight: 600 }}>
               {score >= 80 ? "Excellent" : score >= 50 ? "Needs Improvement" : "Critical Risk"}
+            </p>
+            <p style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "var(--text-dim)", textAlign: "center" }}>
+              Last scanned: just now
             </p>
           </section>
 
@@ -157,8 +171,8 @@ export default function DashboardPage() {
             )}
 
             {breaches > 0 && (
-              <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #f97316" }}>
-                <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(249, 115, 22, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🔓</div>
+              <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #ef4444" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(239, 68, 68, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🔓</div>
                 <div>
                   <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Domain found in data breaches</h3>
                   <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>{breaches} breach records found for your company's domain. Verify credentials.</p>
@@ -168,18 +182,31 @@ export default function DashboardPage() {
 
             {threats.map((threat) => {
               const style = getSeverityStyle(threat.severity);
+              const descSnippet = threat.description?.length > 100 
+                ? threat.description.substring(0, 100) + "..." 
+                : threat.description;
+                
               return (
                 <div key={threat.id} className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: `4px solid ${style.color}` }}>
                   <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: style.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem", flexShrink: 0 }}>
                     {style.icon}
                   </div>
-                  <div>
-                    <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.25rem" }}>
-                      <span style={{ fontSize: "0.7rem", fontWeight: 700, padding: "2px 8px", borderRadius: "100px", background: style.bg, color: style.color }}>{threat.severity}</span>
-                      <span style={{ fontSize: "0.8rem", color: "var(--text-dim)" }}>{threat.published}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", marginBottom: "0.25rem" }}>
+                      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                        <span style={{ fontSize: "0.7rem", fontWeight: 700, padding: "2px 8px", borderRadius: "100px", background: style.bg, color: style.color }}>
+                          {threat.severity}
+                        </span>
+                        <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>{threat.id}</h3>
+                      </div>
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", fontWeight: 500 }}>
+                        Score: {threat.score} • {threat.publishedDate || threat.published}
+                      </span>
                     </div>
-                    <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>{threat.title}</h3>
-                    <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", lineHeight: 1.5 }}>{threat.description}</p>
+                    
+                    <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", lineHeight: 1.5, marginTop: "0.5rem" }}>
+                      {descSnippet}
+                    </p>
                   </div>
                 </div>
               );
