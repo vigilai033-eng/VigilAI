@@ -7,7 +7,7 @@ import Link from "next/link";
 
 export default function SignupPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ companyName: "", email: "", password: "" });
+  const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -17,7 +17,7 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      // 1. Sign up user via Auth
+      // 1. Sign up user via Auth ONLY
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: form.email,
         password: form.password,
@@ -26,23 +26,8 @@ export default function SignupPage() {
       if (authError) throw authError;
       if (!authData.user) throw new Error("No user created.");
 
-      // 2. Insert into subscribers table
-      const { error: dbError } = await supabase.from("subscribers").insert([
-        {
-          id: authData.user.id,
-          business_name: form.companyName,
-          email: form.email,
-          website_url: "",
-          email_provider: "Custom",
-          tech_stack: [],
-          team_size: "1-5",
-        },
-      ]);
-
-      if (dbError) throw dbError;
-
-      // 3. Redirect to dashboard
-      router.push("/dashboard");
+      // 2. Redirect to onboarding to finish setup
+      router.push("/onboarding");
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to sign up");
@@ -65,18 +50,6 @@ export default function SignupPage() {
           </div>
 
           <form onSubmit={handleSubmit}>
-            <div className="field-group">
-              <label className="field-label" htmlFor="companyName">Company Name</label>
-              <input
-                id="companyName"
-                type="text"
-                className="field-input"
-                required
-                value={form.companyName}
-                onChange={(e) => setForm({ ...form, companyName: e.target.value })}
-              />
-            </div>
-
             <div className="field-group">
               <label className="field-label" htmlFor="email">Work Email</label>
               <input
@@ -105,7 +78,7 @@ export default function SignupPage() {
             {error && <div className="field-error" style={{ marginBottom: "1rem" }}>{error}</div>}
 
             <button type="submit" className="btn btn-primary" style={{ width: "100%", marginTop: "1rem" }} disabled={loading}>
-              {loading ? "Creating account..." : "Sign Up"}
+              {loading ? "Creating account..." : "Continue to setup"}
             </button>
           </form>
 

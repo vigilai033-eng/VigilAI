@@ -2,9 +2,8 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import confetti from "canvas-confetti";
+import { useRouter } from "next/navigation";
 
-// ─── Types ────────────────────────────────────────────────
 type EmailProvider = "Gmail" | "Outlook" | "Custom" | "";
 type TeamSize = "1-5" | "6-20" | "21-50" | "50+" | "";
 type TechOption = "React" | "Node.js" | "Python" | "Django" | "WordPress" | "Other";
@@ -12,13 +11,11 @@ type TechOption = "React" | "Node.js" | "Python" | "Django" | "WordPress" | "Oth
 interface FormData {
   businessName: string;
   websiteUrl: string;
-  email: string;
   emailProvider: EmailProvider;
   techStack: TechOption[];
   teamSize: TeamSize;
 }
 
-// ─── Constants ────────────────────────────────────────────
 const EMAIL_PROVIDERS: EmailProvider[] = ["Gmail", "Outlook", "Custom"];
 const TEAM_SIZES: TeamSize[] = ["1-5", "6-20", "21-50", "50+"];
 
@@ -42,13 +39,11 @@ const STEPS = [
 const INITIAL_FORM: FormData = {
   businessName: "",
   websiteUrl: "",
-  email: "",
   emailProvider: "",
   techStack: [],
   teamSize: "",
 };
 
-// ─── Helpers ──────────────────────────────────────────────
 function isValidUrl(val: string): boolean {
   try {
     new URL(val.startsWith("http") ? val : `https://${val}`);
@@ -58,17 +53,28 @@ function isValidUrl(val: string): boolean {
   }
 }
 
-// ─── Component ────────────────────────────────────────────
 export default function OnboardingForm() {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [direction, setDirection] = useState<"forward" | "back">("forward");
   const [form, setForm] = useState<FormData>(INITIAL_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [authUserId, setAuthUserId] = useState<string>("");
+  const [authUserEmail, setAuthUserEmail] = useState<string>("");
 
-  // ── Validation ─────────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.push("/login");
+      } else {
+        setAuthUserId(session.user.id);
+        setAuthUserEmail(session.user.email || "");
+      }
+    });
+  }, [router]);
+
   const validate = useCallback((): boolean => {
     const errs: Partial<Record<keyof FormData, string>> = {};
 
@@ -87,11 +93,6 @@ export default function OnboardingForm() {
     }
 
     if (step === 2) {
-      if (!form.email.trim()) {
-        errs.email = "Email is required.";
-      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-        errs.email = "Please enter a valid email address.";
-      }
       if (!form.emailProvider)
         errs.emailProvider = "Please select an email provider.";
     }
@@ -110,7 +111,6 @@ export default function OnboardingForm() {
     return Object.keys(errs).length === 0;
   }, [step, form]);
 
-  // ── Navigation ─────────────────────────────────────────
   const goNext = () => {
     if (!validate()) return;
     setDirection("forward");
@@ -124,7 +124,6 @@ export default function OnboardingForm() {
     setErrors({});
   };
 
-  // ── Field handlers ─────────────────────────────────────
   const handleText = (field: keyof FormData) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((f) => ({ ...f, [field]: e.target.value }));
     if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }));
@@ -145,20 +144,25 @@ export default function OnboardingForm() {
     if (errors.techStack) setErrors((e) => ({ ...e, techStack: undefined }));
   };
 
-  // ── Submit ─────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!validate()) return;
+    if (!authUserId) {
+      setSubmitError("Authentication required.");
+      return;
+    }
+
     setSubmitting(true);
     setSubmitError("");
 
     try {
       const { error } = await supabase.from("subscribers").insert([
         {
+          id: authUserId,
           business_name: form.businessName.trim(),
           website_url: form.websiteUrl.trim().startsWith("http")
             ? form.websiteUrl.trim()
             : `https://${form.websiteUrl.trim()}`,
-          email: form.email.trim(),
+          email: authUserEmail,
           email_provider: form.emailProvider,
           tech_stack: form.techStack,
           team_size: form.teamSize,
@@ -167,13 +171,7 @@ export default function OnboardingForm() {
       ]);
 
       if (error) throw error;
-      setSubmitted(true);
-      confetti({
-        particleCount: 150,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#22c55e', '#16a34a', '#4ade80', '#ffffff']
-      });
+      router.push("/dashboard");
     } catch (err: any) {
       console.error("Supabase insert error:", err);
       setSubmitError(err.message || "Something went wrong. Please try again.");
@@ -182,25 +180,7 @@ export default function OnboardingForm() {
     }
   };
 
-  // ─── Progress ──────────────────────────────────────────
   const progress = ((step + 1) / STEPS.length) * 100;
-
-  // ─── Success screen ────────────────────────────────────
-  if (submitted) {
-    return (
-      <div className="success-screen" role="alert" aria-live="polite" style={{ minHeight: "60vh", justifyContent: "center" }}>
-        <div className="success-icon-ring" style={{ marginBottom: "2rem" }}>
-          <div className="success-icon-inner" aria-hidden="true" style={{ fontSize: "3rem", color: "#fff" }}>✓</div>
-        </div>
-
-        <h2 className="success-title">VigilAI is now watching your stack.</h2>
-        <p className="success-message">
-          Check your inbox in 10 minutes.
-        </p>
-      </div>
-    );
-  }
-  // ─── Form panels ───────────────────────────────────────
   const panelClass = `step-panel${direction === "back" ? " step-panel-back" : ""}`;
 
   return (
@@ -224,12 +204,10 @@ export default function OnboardingForm() {
         </div>
       </div>
 
-      {/* Progress bar */}
       <div className="progress-bar-track" role="progressbar" aria-valuenow={step + 1} aria-valuemin={1} aria-valuemax={5}>
         <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
       </div>
 
-      {/* ── Step 1: Business name ──────────────────────── */}
       {step === 0 && (
         <div className={panelClass} key="step-0">
           <div className="field-group">
@@ -247,19 +225,14 @@ export default function OnboardingForm() {
               onKeyDown={(e) => e.key === "Enter" && goNext()}
               autoFocus
               autoComplete="organization"
-              aria-describedby={errors.businessName ? "business-name-error" : undefined}
-              aria-invalid={!!errors.businessName}
             />
             {errors.businessName && (
-              <span id="business-name-error" className="field-error" role="alert">
-                ⚠ {errors.businessName}
-              </span>
+              <span className="field-error" role="alert">⚠ {errors.businessName}</span>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Step 2: Website URL ────────────────────────── */}
       {step === 1 && (
         <div className={panelClass} key="step-1">
           <div className="field-group">
@@ -277,45 +250,16 @@ export default function OnboardingForm() {
               onKeyDown={(e) => e.key === "Enter" && goNext()}
               autoFocus
               autoComplete="url"
-              aria-describedby={errors.websiteUrl ? "website-url-error" : undefined}
-              aria-invalid={!!errors.websiteUrl}
             />
             {errors.websiteUrl && (
-              <span id="website-url-error" className="field-error" role="alert">
-                ⚠ {errors.websiteUrl}
-              </span>
+              <span className="field-error" role="alert">⚠ {errors.websiteUrl}</span>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Step 3: Email provider ─────────────────────── */}
       {step === 2 && (
         <div className={panelClass} key="step-2">
-          <div className="field-group">
-            <label className="field-label" htmlFor="email">
-              <span className="field-icon" aria-hidden="true">✉️</span>
-              Work Email
-            </label>
-            <input
-              id="email"
-              type="email"
-              className="field-input"
-              placeholder="you@company.com"
-              value={form.email}
-              onChange={handleText("email")}
-              onKeyDown={(e) => e.key === "Enter" && goNext()}
-              autoFocus
-              autoComplete="email"
-              aria-describedby={errors.email ? "email-error" : undefined}
-              aria-invalid={!!errors.email}
-            />
-            {errors.email && (
-              <span id="email-error" className="field-error" role="alert">
-                ⚠ {errors.email}
-              </span>
-            )}
-          </div>
           <div className="field-group">
             <label className="field-label" htmlFor="email-provider">
               <span className="field-icon" aria-hidden="true">📧</span>
@@ -327,8 +271,6 @@ export default function OnboardingForm() {
                 className="field-select"
                 value={form.emailProvider}
                 onChange={handleSelect("emailProvider")}
-                aria-describedby={errors.emailProvider ? "email-provider-error" : undefined}
-                aria-invalid={!!errors.emailProvider}
               >
                 <option value="" disabled>Select your email provider…</option>
                 {EMAIL_PROVIDERS.map((p) => (
@@ -337,15 +279,12 @@ export default function OnboardingForm() {
               </select>
             </div>
             {errors.emailProvider && (
-              <span id="email-provider-error" className="field-error" role="alert">
-                ⚠ {errors.emailProvider}
-              </span>
+              <span className="field-error" role="alert">⚠ {errors.emailProvider}</span>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Step 4: Tech stack ─────────────────────────── */}
       {step === 3 && (
         <div className={panelClass} key="step-3">
           <div className="field-group">
@@ -356,12 +295,7 @@ export default function OnboardingForm() {
                 (select all that apply)
               </span>
             </label>
-            <div
-              className="tech-grid"
-              role="group"
-              aria-label="Technology stack options"
-              aria-describedby={errors.techStack ? "tech-stack-error" : undefined}
-            >
+            <div className="tech-grid" role="group">
               {TECH_OPTIONS.map(({ value, icon }) => (
                 <div className="tech-option" key={value}>
                   <input
@@ -369,7 +303,6 @@ export default function OnboardingForm() {
                     id={`tech-${value}`}
                     checked={form.techStack.includes(value)}
                     onChange={() => toggleTech(value)}
-                    aria-label={value}
                   />
                   <label className="tech-label" htmlFor={`tech-${value}`}>
                     <span className="tech-check" aria-hidden="true">
@@ -382,15 +315,12 @@ export default function OnboardingForm() {
               ))}
             </div>
             {errors.techStack && (
-              <span id="tech-stack-error" className="field-error" role="alert">
-                ⚠ {errors.techStack}
-              </span>
+              <span className="field-error" role="alert">⚠ {errors.techStack}</span>
             )}
           </div>
         </div>
       )}
 
-      {/* ── Step 5: Team size ──────────────────────────── */}
       {step === 4 && (
         <div className={panelClass} key="step-4">
           <div className="field-group">
@@ -404,9 +334,6 @@ export default function OnboardingForm() {
                 className="field-select"
                 value={form.teamSize}
                 onChange={handleSelect("teamSize")}
-                autoFocus
-                aria-describedby={errors.teamSize ? "team-size-error" : undefined}
-                aria-invalid={!!errors.teamSize}
               >
                 <option value="" disabled>Select your team size…</option>
                 {TEAM_SIZES.map((s) => (
@@ -415,13 +342,10 @@ export default function OnboardingForm() {
               </select>
             </div>
             {errors.teamSize && (
-              <span id="team-size-error" className="field-error" role="alert">
-                ⚠ {errors.teamSize}
-              </span>
+              <span className="field-error" role="alert">⚠ {errors.teamSize}</span>
             )}
           </div>
 
-          {/* Global submit error */}
           {submitError && (
             <div className="field-error" role="alert" style={{ marginBottom: "1rem", color: "#ef4444", fontWeight: 500, fontSize: "0.9rem" }}>
               {submitError}
@@ -430,54 +354,20 @@ export default function OnboardingForm() {
         </div>
       )}
 
-      {/* Navigation */}
       <div className="btn-row">
         {step > 0 ? (
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={goBack}
-            disabled={submitting}
-            aria-label="Go to previous step"
-          >
-            <span className="btn-icon">←</span>
-            Back
+          <button type="button" className="btn btn-ghost" onClick={goBack} disabled={submitting}>
+            <span className="btn-icon">←</span> Back
           </button>
-        ) : (
-          <div />
-        )}
+        ) : <div />}
 
         {step < STEPS.length - 1 ? (
-          <button
-            type="button"
-            id={`next-step-${step}`}
-            className="btn btn-primary"
-            onClick={goNext}
-            aria-label={`Continue to ${STEPS[step + 1].title}`}
-          >
-            Continue
-            <span className="btn-icon">→</span>
+          <button type="button" className="btn btn-primary" onClick={goNext}>
+            Continue <span className="btn-icon">→</span>
           </button>
         ) : (
-          <button
-            type="button"
-            id="submit-form"
-            className="btn btn-primary"
-            onClick={handleSubmit}
-            disabled={submitting}
-            aria-label="Submit onboarding form"
-          >
-            {submitting ? (
-              <>
-                <span className="spinner" aria-hidden="true" />
-                Activating…
-              </>
-            ) : (
-              <>
-                Activate VigilAI
-                <span className="btn-icon">🛡️</span>
-              </>
-            )}
+          <button type="button" className="btn btn-primary" onClick={handleSubmit} disabled={submitting}>
+            {submitting ? "Saving..." : "Finish Onboarding"}
           </button>
         )}
       </div>

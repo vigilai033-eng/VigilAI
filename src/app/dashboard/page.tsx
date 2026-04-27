@@ -32,7 +32,7 @@ export default function DashboardPage() {
           .single();
 
         if (dbError || !subscriber) {
-          setLoading(false);
+          router.push("/onboarding");
           return;
         }
 
@@ -127,9 +127,13 @@ export default function DashboardPage() {
             Vigil<span>AI</span>
           </span>
         </div>
-        <button onClick={handleLogout} className="btn btn-ghost" style={{ padding: "0.4rem 1rem", fontSize: "0.85rem", border: "1px solid var(--border)" }}>
-          Logout
-        </button>
+        <div style={{ display: "flex", gap: "1.5rem", alignItems: "center" }}>
+          <a href="/dashboard" style={{ fontSize: "0.9rem", color: "var(--text-primary)", textDecoration: "none", fontWeight: 500 }}>Dashboard</a>
+          <a href="/settings" style={{ fontSize: "0.9rem", color: "var(--text-muted)", textDecoration: "none", fontWeight: 500 }}>Settings</a>
+          <button onClick={handleLogout} className="btn btn-ghost" style={{ padding: "0.4rem 1rem", fontSize: "0.85rem", border: "1px solid var(--border)" }}>
+            Logout
+          </button>
+        </div>
       </nav>
 
       <main className="main" style={{ alignItems: "flex-start", width: "100%", maxWidth: "1000px" }}>
