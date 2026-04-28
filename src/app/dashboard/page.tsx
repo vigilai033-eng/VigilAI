@@ -12,7 +12,7 @@ export default function DashboardPage() {
   // Data states
   const [score, setScore] = useState(100);
   const [threats, setThreats] = useState<any[]>([]);
-  const [breaches, setBreaches] = useState(0);
+  const [breaches, setBreaches] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -39,11 +39,8 @@ export default function DashboardPage() {
         setCompanyName(subscriber.business_name);
 
         // 1. Fetch breaches
-        const breachesPromise = fetch("/api/breaches", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: subscriber.email })
-        }).then(res => res.json());
+        const domain = subscriber.email.split("@")[1];
+        const breachesPromise = fetch(`/api/breaches?domain=${encodeURIComponent(domain)}`).then(res => res.json());
 
         // 2. Fetch threats via GET for each technology sequentially to avoid NVD rate limits
         const techResults = [];
@@ -62,7 +59,8 @@ export default function DashboardPage() {
         // Await breaches promise
         const breachesData = await breachesPromise;
 
-        setBreaches(breachesData.count || 0);
+        const breachesList = Array.isArray(breachesData) ? breachesData : [];
+        setBreaches(breachesList);
 
         // Combine all threats
         let allThreats: any[] = [];
@@ -94,9 +92,31 @@ export default function DashboardPage() {
 
         let newScore = 100 - criticalDeduction - highDeduction - mediumDeduction;
         
-        if (breachesData.count > 0) {
-          newScore -= 20;
+        let breachDeduction = 0;
+        if (breachesList.length > 0) {
+          const oneYearAgo = new Date();
+          oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+          
+          let hasRecentBreach = false;
+          let hasOldBreach = false;
+
+          breachesList.forEach((b: any) => {
+            const breachDate = new Date(b.date);
+            if (breachDate >= oneYearAgo) {
+              hasRecentBreach = true;
+            } else {
+              hasOldBreach = true;
+            }
+          });
+
+          if (hasRecentBreach) {
+            breachDeduction = 15;
+          } else if (hasOldBreach) {
+            breachDeduction = 10;
+          }
         }
+        
+        newScore -= breachDeduction;
 
         // Floor at 20
         setScore(Math.max(20, newScore));
@@ -170,6 +190,11 @@ export default function DashboardPage() {
       </nav>
 
       <main className="main" style={{ alignItems: "flex-start", width: "100%", maxWidth: "1000px" }}>
+        {breaches.length > 0 && (
+          <div style={{ width: "100%", padding: "1rem", backgroundColor: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid #ef4444", borderRadius: "8px", marginBottom: "2rem", fontWeight: 600, textAlign: "center" }}>
+            🚨 Warning: Your domain was found in a data breach. Immediate action required.
+          </div>
+        )}
         <header style={{ marginBottom: "3rem", width: "100%" }}>
           <h1 style={{ fontSize: "2.5rem", fontWeight: 800, marginBottom: "0.5rem" }}>
             Welcome back, <span style={{ color: "var(--green-400)" }}>{companyName || "Security Admin"}</span>
@@ -199,21 +224,11 @@ export default function DashboardPage() {
           <section style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             <h2 style={{ fontSize: "1.2rem", fontWeight: 700, marginBottom: "0.5rem", color: "var(--text-primary)" }}>Active Alerts</h2>
             
-            {threats.length === 0 && breaches === 0 && (
+            {threats.length === 0 && (
               <div className="card" style={{ padding: "2rem", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1rem" }}>
                 <div style={{ fontSize: "2rem" }}>✅</div>
                 <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--green-400)" }}>No threats found</h3>
                 <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Your stack looks secure. We will keep monitoring.</p>
-              </div>
-            )}
-
-            {breaches > 0 && (
-              <div className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #ef4444" }}>
-                <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(239, 68, 68, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem" }}>🔓</div>
-                <div>
-                  <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "0.25rem" }}>Domain found in data breaches</h3>
-                  <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>{breaches} breach records found for your company's domain. Verify credentials.</p>
-                </div>
               </div>
             )}
 
@@ -248,6 +263,37 @@ export default function DashboardPage() {
                 </div>
               );
             })}
+          </section>
+
+          {/* Email Breach Detection */}
+          <section style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1rem" }}>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 700, marginBottom: "0.5rem", color: "var(--text-primary)" }}>Email Breach Detection</h2>
+            
+            {breaches.length === 0 ? (
+              <div className="card" style={{ padding: "2rem", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "1rem", borderLeft: "4px solid var(--green-500, #22c55e)" }}>
+                <div style={{ fontSize: "2rem" }}>✅</div>
+                <h3 style={{ fontSize: "1.1rem", fontWeight: 600, color: "var(--green-400)" }}>No breaches detected</h3>
+                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)" }}>Your domain is not present in any known data breaches.</p>
+              </div>
+            ) : (
+              breaches.map((breach: any, idx: number) => (
+                <div key={idx} className="card" style={{ padding: "1.5rem", display: "flex", gap: "1.5rem", alignItems: "center", borderLeft: "4px solid #ef4444" }}>
+                  <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "rgba(239, 68, 68, 0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.5rem", flexShrink: 0 }}>🔓</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", marginBottom: "0.25rem" }}>
+                      <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--text-primary)" }}>{breach.name}</h3>
+                      <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", fontWeight: 500 }}>
+                        {breach.date} • {breach.affectedAccounts.toLocaleString()} accounts affected
+                      </span>
+                    </div>
+                    <p 
+                      style={{ fontSize: "0.9rem", color: "var(--text-muted)", lineHeight: 1.5, marginTop: "0.5rem" }} 
+                      dangerouslySetInnerHTML={{ __html: breach.description }} 
+                    />
+                  </div>
+                </div>
+              ))
+            )}
           </section>
         </div>
       </main>
