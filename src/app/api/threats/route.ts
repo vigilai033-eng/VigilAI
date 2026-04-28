@@ -5,6 +5,29 @@ const formatDateForNVD = (date: Date) => {
   return date.toISOString().substring(0, 19) + ".000";
 };
 
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function fetchWithRetry(url: string, retries = 3, delayMs = 1500) {
+  for (let i = 0; i < retries; i++) {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "VigilAI-Security-App" },
+      next: { revalidate: 3600 }
+    });
+    
+    if (res.ok) return res;
+    
+    if (res.status === 429 && i < retries - 1) {
+      await delay(delayMs * (i + 1));
+      continue;
+    }
+    
+    if (!res.ok) {
+      throw new Error(`NVD API responded with status: ${res.status}`);
+    }
+  }
+  throw new Error(`NVD API failed after ${retries} retries`);
+}
+
 // Helper for keyword expansion and filtering exclusions
 const getSearchConfig = (keyword: string) => {
   let query = keyword;
@@ -25,9 +48,11 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const keyword = searchParams.get("keyword") || "React";
 
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(endDate.getDate() - 90); // last 90 days
+    // Use fixed end of day for caching purposes
+    const today = new Date();
+    const endDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 23, 59, 59));
+    const startDate = new Date(endDate);
+    startDate.setUTCDate(endDate.getUTCDate() - 90); // last 90 days
     
     const pubStartDate = formatDateForNVD(startDate);
     const pubEndDate = formatDateForNVD(endDate);
@@ -36,14 +61,7 @@ export async function GET(req: Request) {
 
     const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${encodeURIComponent(pubStartDate)}&pubEndDate=${encodeURIComponent(pubEndDate)}&resultsPerPage=50`;
     
-    const res = await fetch(url, {
-      headers: { "User-Agent": "VigilAI-Security-App" },
-      next: { revalidate: 3600 }
-    });
-    
-    if (!res.ok) {
-      throw new Error(`NVD API responded with status: ${res.status}`);
-    }
+    const res = await fetchWithRetry(url);
 
     const data = await res.json();
     let vulnerabilities = data.vulnerabilities || [];
@@ -51,7 +69,8 @@ export async function GET(req: Request) {
     // Filter results strictly
     vulnerabilities = vulnerabilities.filter((item: any) => {
       const desc = item.cve.descriptions?.find((d: any) => d.lang === "en")?.value?.toLowerCase() || "";
-      if (!desc.includes(keyword.toLowerCase())) return false; // Must contain exact original keyword
+      const exactKeywordMatch = new RegExp(`\\b${keyword.toLowerCase()}\\b`);
+      if (!exactKeywordMatch.test(desc)) return false; // Must contain exact original keyword
       if (exclusions.some(ex => desc.includes(ex))) return false; // Must not contain exclusions
       return true;
     });
@@ -94,9 +113,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ threats: [] });
     }
 
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(endDate.getDate() - 90);
+    // Use fixed end of day for caching purposes
+    const today = new Date();
+    const endDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 23, 59, 59));
+    const startDate = new Date(endDate);
+    startDate.setUTCDate(endDate.getUTCDate() - 90);
     
     const pubStartDate = formatDateForNVD(startDate);
     const pubEndDate = formatDateForNVD(endDate);
@@ -109,10 +130,7 @@ export async function POST(req: Request) {
         const { query, exclusions } = getSearchConfig(tech);
         const url = `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&pubStartDate=${encodeURIComponent(pubStartDate)}&pubEndDate=${encodeURIComponent(pubEndDate)}&resultsPerPage=50`;
         
-        const res = await fetch(url, {
-          headers: { "User-Agent": "VigilAI-Security-App" },
-          next: { revalidate: 3600 } 
-        });
+        const res = await fetchWithRetry(url);
         
         if (res.ok) {
           const data = await res.json();
@@ -120,7 +138,8 @@ export async function POST(req: Request) {
           
           vulnerabilities = vulnerabilities.filter((item: any) => {
             const desc = item.cve.descriptions?.find((d: any) => d.lang === "en")?.value?.toLowerCase() || "";
-            if (!desc.includes(tech.toLowerCase())) return false;
+            const exactTechMatch = new RegExp(`\\b${tech.toLowerCase()}\\b`);
+            if (!exactTechMatch.test(desc)) return false;
             if (exclusions.some(ex => desc.includes(ex))) return false;
             return true;
           });

@@ -45,13 +45,22 @@ export default function DashboardPage() {
           body: JSON.stringify({ email: subscriber.email })
         }).then(res => res.json());
 
-        // 2. Fetch threats via GET for each technology
-        const techPromises = (subscriber.tech_stack || []).map((tech: string) => 
-          fetch(`/api/threats?keyword=${encodeURIComponent(tech)}`).then(res => res.json())
-        );
+        // 2. Fetch threats via GET for each technology sequentially to avoid NVD rate limits
+        const techResults = [];
+        for (const tech of (subscriber.tech_stack || [])) {
+          try {
+            const res = await fetch(`/api/threats?keyword=${encodeURIComponent(tech)}`);
+            if (res.ok) {
+              const data = await res.json();
+              techResults.push(data);
+            }
+          } catch (err) {
+            console.error(`Failed to fetch threats for ${tech}:`, err);
+          }
+        }
 
-        // Await all parallel requests
-        const [breachesData, ...techResults] = await Promise.all([breachesPromise, ...techPromises]);
+        // Await breaches promise
+        const breachesData = await breachesPromise;
 
         setBreaches(breachesData.count || 0);
 
@@ -69,18 +78,28 @@ export default function DashboardPage() {
         setThreats(uniqueThreats);
 
         // Calculate score
-        let newScore = 100;
+        let criticalCount = 0;
+        let highCount = 0;
+        let mediumCount = 0;
+
         uniqueThreats.forEach((t: any) => {
-          if (t.severity === "CRITICAL") newScore -= 15;
-          else if (t.severity === "HIGH") newScore -= 10;
+          if (t.severity === "CRITICAL") criticalCount++;
+          else if (t.severity === "HIGH") highCount++;
+          else if (t.severity === "MEDIUM") mediumCount++;
         });
+
+        const criticalDeduction = Math.min(criticalCount * 10, 40);
+        const highDeduction = Math.min(highCount * 5, 30);
+        const mediumDeduction = Math.min(mediumCount * 2, 20);
+
+        let newScore = 100 - criticalDeduction - highDeduction - mediumDeduction;
         
         if (breachesData.count > 0) {
           newScore -= 20;
         }
 
-        // Floor at 0
-        setScore(Math.max(0, newScore));
+        // Floor at 20
+        setScore(Math.max(20, newScore));
       } catch (err) {
         console.error("Dashboard fetch error:", err);
       } finally {
@@ -112,8 +131,22 @@ export default function DashboardPage() {
     return { color: "#eab308", bg: "rgba(234, 179, 8, 0.1)", icon: "🛡️" }; // LOW
   };
 
-  // Score color
-  const scoreColor = score >= 80 ? "var(--green-500)" : score >= 50 ? "#f97316" : "#ef4444";
+  // Score color and label
+  const getScoreColor = (s: number) => {
+    if (s >= 90) return "var(--green-500)";
+    if (s >= 70) return "#eab308";
+    if (s >= 50) return "#f97316";
+    return "#ef4444";
+  };
+  const scoreColor = getScoreColor(score);
+
+  const getScoreLabel = (s: number) => {
+    if (s >= 90) return "Excellent";
+    if (s >= 70) return "Good";
+    if (s >= 50) return "Needs Improvement";
+    if (s >= 30) return "At Risk";
+    return "Critical Risk";
+  };
 
   return (
     <div className="page-wrapper">
@@ -148,14 +181,14 @@ export default function DashboardPage() {
           {/* Security Score */}
           <section className="card" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "3rem 2rem", height: "fit-content" }}>
             <h2 style={{ fontSize: "1rem", textTransform: "uppercase", letterSpacing: "1px", color: "var(--text-secondary)", marginBottom: "1.5rem" }}>Security Score</h2>
-            <div style={{ position: "relative", width: "150px", height: "150px", borderRadius: "50%", background: `conic-gradient(${scoreColor} ${score}%, var(--bg-secondary) 0)`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: score >= 80 ? "0 0 30px var(--green-glow)" : "none" }}>
+            <div style={{ position: "relative", width: "150px", height: "150px", borderRadius: "50%", background: `conic-gradient(${scoreColor} ${score}%, var(--bg-secondary) 0)`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: score >= 90 ? "0 0 30px var(--green-glow)" : "none" }}>
               <div style={{ width: "130px", height: "130px", borderRadius: "50%", background: "var(--bg-card)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
                 <span style={{ fontSize: "2.8rem", fontWeight: 900, color: "var(--text-primary)", lineHeight: 1 }}>{score}</span>
                 <span style={{ fontSize: "0.9rem", color: "var(--text-dim)", fontWeight: 600 }}>/ 100</span>
               </div>
             </div>
             <p style={{ marginTop: "1.5rem", fontSize: "0.9rem", color: "var(--text-muted)", textAlign: "center", fontWeight: 600 }}>
-              {score >= 80 ? "Excellent" : score >= 50 ? "Needs Improvement" : "Critical Risk"}
+              {getScoreLabel(score)}
             </p>
             <p style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "var(--text-dim)", textAlign: "center" }}>
               Last scanned: just now
